@@ -1,0 +1,17 @@
+# Requirements for Jarvis project
+# Install Python packages with: pip install -r requirements.txt
+
+# Python packages
+RealtimeTTS
+nltk
+numpy
+sounddevice
+faster-whisper
+openwakeword
+
+# External / system tools (install separately):
+# - Ollama (local LLM service) must be installed and running for `brain.py` to work.
+# - PortAudio (system library) may be required by `sounddevice` on some platforms.
+# - ffmpeg is recommended for audio handling and conversions.
+# - Faster-Whisper model files: download or let `faster-whisper` fetch them when first used.
+# - On Windows, Microsoft OneCore/SAPI voices are provided by the OS (no pip package).
