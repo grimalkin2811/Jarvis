@@ -6,7 +6,8 @@ import tts
 
 
 _TOKEN_RE = re.compile(r"\S+\s*", re.DOTALL)
-_PUNCTUATION_ENDINGS = (".", "!", "?", ";", ":", ",")
+_STRONG_PUNCTUATION_ENDINGS = (".", "!", "?", ";", ":")
+_SOFT_PUNCTUATION_ENDINGS = (",",)
 
 
 def _count_words(text: str) -> int:
@@ -15,8 +16,8 @@ def _count_words(text: str) -> int:
 
 def _split_ready_chunks(
     buffer: str,
-    min_words: int = 10,
-    max_words: int = 16,
+    min_words: int = 18,
+    max_words: int = 32,
 ) -> tuple[list[str], str]:
     ready: list[str] = []
     matches = list(_TOKEN_RE.finditer(buffer))
@@ -29,7 +30,10 @@ def _split_ready_chunks(
     last_token = last_match.group(0)
 
     # Garde le dernier token en attente s'il semble encore incomplet.
-    if not last_token[-1].isspace() and not last_token.rstrip().endswith(_PUNCTUATION_ENDINGS):
+    if (
+        not last_token[-1].isspace()
+        and not last_token.rstrip().endswith(_STRONG_PUNCTUATION_ENDINGS + _SOFT_PUNCTUATION_ENDINGS)
+    ):
         complete_upto -= 1
 
     if complete_upto <= 0:
@@ -48,11 +52,11 @@ def _split_ready_chunks(
         words_in_segment += _count_words(stripped)
         should_flush = False
 
-        if stripped.endswith(_PUNCTUATION_ENDINGS):
-            should_flush = words_in_segment >= 1
+        if stripped.endswith(_STRONG_PUNCTUATION_ENDINGS):
+            should_flush = words_in_segment >= 6
+        elif stripped.endswith(_SOFT_PUNCTUATION_ENDINGS):
+            should_flush = words_in_segment >= min_words
         elif words_in_segment >= max_words:
-            should_flush = True
-        elif words_in_segment >= min_words:
             should_flush = True
 
         if should_flush:
@@ -74,10 +78,10 @@ def ask_and_speak(
     system_prompt: Optional[str] = None,
     temperature: float = 0.2,
     echo: bool = True,
-    lead_chunks: int = 3,
+    lead_chunks: int = 2,
 ) -> str:
     """
-    Stream la reponse de brain.py et la lit a voix haute par petits groupes de mots.
+    Stream la reponse de brain.py et la lit a voix haute par segments plus naturels.
     """
     speaker = tts.StreamingSpeaker()
     answer_parts: list[str] = []

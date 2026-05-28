@@ -1,173 +1,225 @@
-import asyncio
 import queue
+import re
 import threading
-from pathlib import Path
+import time
+import winreg
+from collections.abc import Iterator
 from typing import Final
 
-import numpy as np
-import sounddevice as sd
-from kokoro_onnx import Kokoro, SAMPLE_RATE
+from RealtimeTTS import SystemEngine, TextToAudioStream
 
 
-MODEL_PATH: Final[Path] = Path(__file__).with_name("kokoro-v1.0.onnx")
-VOICES_PATH: Final[Path] = Path(__file__).with_name("voices-v1.0.bin")
-DEFAULT_VOICE: Final[str] = "ff_siwis"
-DEFAULT_LANG: Final[str] = "fr-fr"
-DEFAULT_SPEED: Final[float] = 1.0
+DEFAULT_VOICE_HINTS: Final[tuple[str, ...]] = (
+    "Paul",
+    "Microsoft Paul",
+    "French",
+    "Hortense",
+)
+DEFAULT_RATE: Final[int] = 175
+DEFAULT_VOLUME: Final[float] = 1.0
+DEFAULT_BUFFER_THRESHOLD_SECONDS: Final[float] = 1.2
 _STOP = object()
 
 
-_kokoro_lock = threading.Lock()
-_kokoro_instance: Kokoro | None = None
+def _normalize_text(text: str) -> str:
+    normalized = " ".join(text.split())
+    normalized = normalized.replace("...", ".")
+    normalized = normalized.replace(";", ", ")
+    normalized = normalized.replace(" - ", ", ")
+    return normalized.strip()
 
 
-def _get_kokoro() -> Kokoro:
-    global _kokoro_instance
+def _split_sentences(text: str) -> list[str]:
+    parts = re.split(r"(?<=[.!?;:])\s+", text.strip())
+    return [part.strip() for part in parts if part.strip()]
 
-    if _kokoro_instance is None:
-        with _kokoro_lock:
-            if _kokoro_instance is None:
-                if not MODEL_PATH.exists():
-                    raise FileNotFoundError(f"Modele Kokoro introuvable: {MODEL_PATH}")
-                if not VOICES_PATH.exists():
-                    raise FileNotFoundError(f"Voices Kokoro introuvable: {VOICES_PATH}")
-                _kokoro_instance = Kokoro(str(MODEL_PATH), str(VOICES_PATH))
 
-    return _kokoro_instance
+def _get_absolute_onecore_voices() -> dict[str, str]:
+    """Scanne le registre Windows pour associer le nom d'une voix OneCore à son ID absolu."""
+    voices_map = {}
+    path = r"SOFTWARE\Microsoft\Speech_OneCore\Voices\Tokens"
+    try:
+        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
+        for i in range(winreg.QueryInfoKey(key)[0]):
+            subkey_name = winreg.EnumKey(key, i)
+            subkey = winreg.OpenKey(key, subkey_name)
+            try:
+                voice_name = winreg.QueryValueEx(subkey, "")[0]
+                full_id = rf"HKEY_LOCAL_MACHINE\{path}\{subkey_name}"
+                voices_map[voice_name] = full_id
+            except:
+                continue
+    except Exception:
+        pass
+    return voices_map
+
+
+def _pick_voice(engine: SystemEngine, preferred: str | None = None) -> str:
+    # 1. On récupère d'abord les voix classiques de l'engine (SAPI5, ou OneCore unifiées)
+    engine_voices = engine.get_voices()
+    
+    # 2. On récupère aussi les voix OneCore cachées via le registre
+    onecore_voices = _get_absolute_onecore_voices()
+
+    hints = [preferred] if preferred else list(DEFAULT_VOICE_HINTS)
+
+    # Étape A : On cherche d'abord dans les voix actives de l'engine (SAPI5 classiques, ou OneCore unifiées)
+    for hint in hints:
+        if not hint:
+            continue
+        hint_lower = hint.lower()
+        for v in engine_voices:
+            if hint_lower in v.name.lower() or hint_lower in v.id.lower():
+                return v.id
+
+    # Étape B : Si pas trouvé dans SAPI5, on cherche dans les voix OneCore cachées (Paul, Julie...)
+    for hint in hints:
+        if not hint:
+            continue
+        hint_lower = hint.lower()
+        for name, full_id in onecore_voices.items():
+            if hint_lower in name.lower():
+                return full_id
+
+    # Étape C : Fallback ultime
+    if engine_voices:
+        return engine_voices[0].id
+    return ""
+
+
+def available_voices() -> list[str]:
+    engine = SystemEngine()
+    try:
+        # Affiche à la fois les voix classiques et détecte les OneCore dans le registre
+        onecore = list(_get_absolute_onecore_voices().keys())
+        classic = [voice.name for voice in engine.get_voices()]
+        return list(set(onecore + classic))
+    finally:
+        engine.shutdown()
 
 
 class StreamingSpeaker:
     """
-    Speaker Kokoro avec synthese et lecture audio en continu.
+    Speaker basé sur RealtimeTTS + SystemEngine (avec bypass Registre OneCore).
     """
 
     def __init__(
         self,
-        voice: str = DEFAULT_VOICE,
-        lang: str = DEFAULT_LANG,
-        speed: float = DEFAULT_SPEED,
-        blocksize: int = 2048,
+        voice: str | None = None,
+        rate: int = DEFAULT_RATE,
+        volume: float = DEFAULT_VOLUME,
+        buffer_threshold_seconds: float = DEFAULT_BUFFER_THRESHOLD_SECONDS,
     ) -> None:
-        self.voice = voice
-        self.lang = lang
-        self.speed = speed
-        self.blocksize = blocksize
+        self._queue: queue.Queue[object] = queue.Queue()
+        self._closed = False
+        self._engine = SystemEngine()
+        
+        # 1. Recherche de l'ID de la voix (Paul ciblé via son chemin absolu)
+        self.voice_id = _pick_voice(self._engine, voice)
+        print(f"[TTS] ID Voix appliqué : {self.voice_id}")
+        
+        # 2. Création du stream
+        self._stream = TextToAudioStream(
+            self._engine,
+            language="fr",
+            tokenizer="nltk",
+            muted=False,
+        )
+        
+        # 3. On force l'ID absolu sur le moteur après l'init du stream
+        try:
+            self._engine.set_voice(self.voice_id)
+        except Exception as e:
+            print(f"[TTS] Erreur lors du set_voice initial, tentative de forçage direct : {e}")
+            
+        self._engine.set_voice_parameters(rate=rate, volume=volume)
+        
+        self._buffer_threshold_seconds = buffer_threshold_seconds
+        self._playback_started = threading.Event()
+        self._worker = threading.Thread(target=self._run, daemon=True)
+        self._worker.start()
 
-        self._text_queue: queue.Queue[object] = queue.Queue()
-        self._audio_queue: queue.Queue[object] = queue.Queue(maxsize=64)
-        self._current_audio = np.zeros(0, dtype=np.float32)
-        self._current_offset = 0
-        self._audio_finished = False
-
-        self._synth_thread = threading.Thread(target=self._run_synth, daemon=True)
-        self._play_thread = threading.Thread(target=self._run_playback, daemon=True)
-        self._synth_thread.start()
-        self._play_thread.start()
-
-    async def _synthesize_text(self, text: str) -> None:
-        kokoro = _get_kokoro()
-        async for samples, _sample_rate in kokoro.create_stream(
-            text=text,
-            voice=self.voice,
-            speed=self.speed,
-            lang=self.lang,
-        ):
-            self._audio_queue.put(np.asarray(samples, dtype=np.float32))
-
-    def _run_synth(self) -> None:
+    def _text_iterator(self) -> Iterator[str]:
         while True:
-            item = self._text_queue.get()
+            item = self._queue.get()
             try:
                 if item is _STOP:
-                    self._audio_queue.put(_STOP)
                     return
 
-                text = str(item).strip()
+                text = _normalize_text(str(item))
                 if text:
-                    asyncio.run(self._synthesize_text(text))
+                    yield text
             finally:
-                self._text_queue.task_done()
+                self._queue.task_done()
 
-    def _pull_audio(self, frames: int) -> np.ndarray:
-        output = np.zeros(frames, dtype=np.float32)
-        written = 0
+    def _run(self) -> None:
+        iterator = self._text_iterator()
+        self._stream.feed(iterator)
+        
+        # On remet une couche juste avant le play pour s'assurer que l'engine n'a pas bougé
+        try:
+            self._engine.set_voice(self.voice_id)
+        except:
+            pass
 
-        while written < frames:
-            if self._current_offset >= len(self._current_audio):
-                if self._audio_finished:
-                    break
+        self._stream.play_async(
+            fast_sentence_fragment=False,
+            fast_sentence_fragment_allsentences=False,
+            buffer_threshold_seconds=self._buffer_threshold_seconds,
+            minimum_sentence_length=18,
+            minimum_first_fragment_length=18,
+            tokenizer="nltk",
+            tokenize_sentences=_split_sentences,
+            language="fr",
+            sentence_fragment_delimiters=".?!;:\n",
+            comma_silence_duration=0.05,
+            sentence_silence_duration=0.12,
+            default_silence_duration=0.05,
+        )
+        self._playback_started.set()
 
-                try:
-                    item = self._audio_queue.get_nowait()
-                except queue.Empty:
-                    break
-
-                if item is _STOP:
-                    self._audio_finished = True
-                    self._audio_queue.task_done()
-                    break
-
-                self._current_audio = np.asarray(item, dtype=np.float32).flatten()
-                self._current_offset = 0
-                self._audio_queue.task_done()
-
-                if len(self._current_audio) == 0:
-                    continue
-
-            remaining_chunk = len(self._current_audio) - self._current_offset
-            remaining_output = frames - written
-            take = min(remaining_chunk, remaining_output)
-
-            output[written : written + take] = self._current_audio[
-                self._current_offset : self._current_offset + take
-            ]
-            self._current_offset += take
-            written += take
-
-        return output
-
-    def _run_playback(self) -> None:
-        def callback(outdata, frames, _time, _status) -> None:
-            samples = self._pull_audio(frames)
-            outdata[:, 0] = samples
-
-        with sd.OutputStream(
-            samplerate=SAMPLE_RATE,
-            channels=1,
-            dtype="float32",
-            blocksize=self.blocksize,
-            callback=callback,
-        ):
-            while True:
-                if (
-                    self._audio_finished
-                    and self._current_offset >= len(self._current_audio)
-                    and self._audio_queue.empty()
-                ):
-                    break
-                threading.Event().wait(0.02)
+        while self._stream.is_playing():
+            time.sleep(0.05)
 
     def speak(self, text: str) -> None:
-        self._text_queue.put(text)
+        if self._closed:
+            raise RuntimeError("Le speaker est déjà fermé.")
+        self._queue.put(text)
 
     def close(self) -> None:
-        self._text_queue.put(_STOP)
-        self._text_queue.join()
-        self._synth_thread.join()
-        self._play_thread.join()
+        if self._closed:
+            return
+
+        self._closed = True
+        self._queue.put(_STOP)
+        self._queue.join()
+        self._playback_started.wait(timeout=5)
+        self._worker.join(timeout=60)
+        try:
+            self._stream.stop()
+        except Exception:
+            pass
+        self._engine.shutdown()
 
 
 def parler(
     texte: str,
-    voice: str = DEFAULT_VOICE,
-    lang: str = DEFAULT_LANG,
-    speed: float = DEFAULT_SPEED,
+    voice: str | None = None,
+    rate: int = DEFAULT_RATE,
+    volume: float = DEFAULT_VOLUME,
 ) -> None:
     """
-    Lit un texte complet de facon bloquante avec Kokoro.
+    Lit un texte complet de façon bloquante avec RealtimeTTS/SystemEngine.
     """
-    speaker = StreamingSpeaker(voice=voice, lang=lang, speed=speed)
+    speaker = StreamingSpeaker(voice=voice, rate=rate, volume=volume)
     try:
         speaker.speak(texte)
     finally:
         speaker.close()
+
+
+if __name__ == "__main__":
+    print("Voix globales détectées (Classiques + Modernes) :", available_voices())
+    print("-" * 50)
+    
+    parler("Bonjour Simon ! Ceci est un test avec le script mis à jour. Normalement, c'est bien la voix de Paul qui doit s'activer maintenant.")

@@ -60,14 +60,14 @@ def _find_model(candidates: list[str], available: list[str]) -> str | None:
     return None
 
 
-def _resolve_phi3_model() -> str:
+def _resolve_default_model() -> str:
     available = _available_models()
     if not available:
         raise RuntimeError("Aucun modele Ollama n'est installe.")
 
-    phi3 = _find_model(["phi3:mini", "phi3:latest", "phi3"], available)
-    if phi3:
-        return phi3
+    qwen = _find_model(["qwen2.5:1.5b", "qwen2.5", "qwen"], available)
+    if qwen:
+        return qwen
 
     return available[0]
 
@@ -75,7 +75,7 @@ def _resolve_phi3_model() -> str:
 def stream_ask(
     question: str,
     system_prompt: str | None = None,
-    temperature: float = 0.2,
+    temperature: float = 0.1,
 ) -> Iterator[str]:
     """
     Genere la reponse d'Ollama morceau par morceau.
@@ -83,7 +83,7 @@ def stream_ask(
     if not question or not question.strip():
         raise ValueError("La question ne peut pas etre vide.")
 
-    selected_model = _resolve_phi3_model()
+    selected_model = _resolve_default_model()
     final_system = system_prompt or (
         "Tu es un assistant utile et precis. Reponds dans la langue de l'utilisateur. "
         "Ne rajoute pas de bla bla inutile, reponds simplement a la question. "
@@ -133,18 +133,18 @@ def stream_ask(
 def ask(
     question: str,
     system_prompt: str | None = None,
-    temperature: float = 0.2,
+    temperature: float = 0.1,
     return_metadata: bool = False,
 ) -> str | dict[str, Any]:
     """
     Pose une question a Ollama.
 
-    Pour l'instant, toutes les questions sont envoyees a phi3.
+    Pour l'instant, toutes les questions sont envoyees a qwen2.5:1.5b.
     """
     if not question or not question.strip():
         raise ValueError("La question ne peut pas etre vide.")
 
-    selected_model = _resolve_phi3_model()
+    selected_model = _resolve_default_model()
     final_system = system_prompt or (
         "Tu es un assistant utile et precis. Reponds dans la langue de l'utilisateur. "
         "Ne rajoute pas de bla bla inutile, réponds simplement a la question. "
@@ -173,9 +173,9 @@ def ask(
     if return_metadata:
         return {
             "answer": answer,
-            "selected_route": "phi3",
+            "selected_route": "qwen2.5:1.5b",
             "selected_model": selected_model,
-            "routing_reason": "Routage temporairement desactive: phi3 est force.",
+            "routing_reason": "Routage temporairement desactive: qwen2.5:1.5b est force.",
         }
 
     return answer
