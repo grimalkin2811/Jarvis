@@ -1,6 +1,7 @@
 import json
 import urllib.error
 import urllib.request
+from functools import lru_cache
 from typing import Any, Iterator
 
 
@@ -39,6 +40,7 @@ def _get_json(path: str) -> dict[str, Any]:
         ) from exc
 
 
+@lru_cache(maxsize=1)
 def _available_models() -> list[str]:
     data = _get_json("/api/tags")
     return [model["name"] for model in data.get("models", []) if model.get("name")]
@@ -60,6 +62,7 @@ def _find_model(candidates: list[str], available: list[str]) -> str | None:
     return None
 
 
+@lru_cache(maxsize=1)
 def _resolve_default_model() -> str:
     available = _available_models()
     if not available:
