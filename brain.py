@@ -68,7 +68,7 @@ def _resolve_default_model() -> str:
     if not available:
         raise RuntimeError("Aucun modele Ollama n'est installe.")
 
-    qwen = _find_model(["qwen2.5:1.5b", "qwen2.5", "qwen"], available)
+    qwen = _find_model(["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5", "qwen"], available)
     if qwen:
         return qwen
 
@@ -176,9 +176,9 @@ def ask(
     if return_metadata:
         return {
             "answer": answer,
-            "selected_route": "qwen2.5:1.5b",
+            "selected_route": "qwen2.5:0.5b",
             "selected_model": selected_model,
-            "routing_reason": "Routage temporairement desactive: qwen2.5:1.5b est force.",
+            "routing_reason": "Routage temporairement desactive: qwen2.5:0.5b est force par defaut.",
         }
 
     return answer
