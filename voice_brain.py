@@ -129,4 +129,4 @@ def ask_and_speak(
 
 
 if __name__ == "__main__":
-    ask_and_speak("Explique en trois phrases ce qu'est Ollama.")
+    ask_and_speak("Explique en trois phrases ce qu'est l'outil Ollama.")

@@ -10,10 +10,10 @@ from typing import Deque
 
 import numpy as np
 import sounddevice as sd
-import brain
-from faster_whisper import WhisperModel
+import voice_brain
 from openwakeword import Model as WakeWordModel
 from openwakeword.utils import download_models
+from faster_whisper import WhisperModel
 
 
 WAKEWORD_NAME = "hey_jarvis"
@@ -151,23 +151,17 @@ class PermanentSpeechListener:
     def _ask_brain(self, question: str) -> str:
         print(f"[brain] question: {question}", flush=True)
         print("[brain] reponse: ", end="", flush=True)
-        answer_parts: list[str] = []
-        system_prompt = (
-            "Tu es Jarvis. Reponds en francais, de facon directe, courte et utile."
+
+        answer_text = voice_brain.ask_and_speak(
+            question=question,
+            system_prompt=(
+                "Tu es Jarvis. Reponds en francais, de facon directe, courte et utile."
+            ),
+            temperature=0.0,
+            echo=True,
         )
 
-        try:
-            for chunk in brain.stream_ask(
-                question=question,
-                system_prompt=system_prompt,
-                temperature=0.0,
-            ):
-                answer_parts.append(chunk)
-                print(chunk, end="", flush=True)
-        finally:
-            print("", flush=True)
-
-        answer_text = _clean_text("".join(answer_parts))
+        answer_text = _clean_text(answer_text)
         if not answer_text:
             print("[brain] reponse vide", flush=True)
         return answer_text

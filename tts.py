@@ -30,6 +30,7 @@ DEFAULT_SPEAKER_ID: Final[int] = 0
 DEFAULT_RATE: Final[int] = 175
 DEFAULT_VOLUME: Final[float] = 1.0
 DEFAULT_BUFFER_THRESHOLD_SECONDS: Final[float] = 1.2
+DEFAULT_SILENCE_SCALE: Final[float] = 0.05
 _STOP = object()
 
 _VOICE_ALIASES: Final[tuple[str, ...]] = (
@@ -142,7 +143,8 @@ def _build_tts_engine() -> sherpa_onnx.OfflineTts:
             ),
             num_threads=1,
             debug=False,
-        )
+        ),
+        silence_scale=DEFAULT_SILENCE_SCALE,
     )
     if not config.validate():
         raise RuntimeError("La configuration sherpa-onnx est invalide.")
