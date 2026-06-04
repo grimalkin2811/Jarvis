@@ -74,7 +74,6 @@ def _resolve_wakeword_model_path() -> str:
     model_path = models_dir / "hey_jarvis_v0.1.onnx"
 
     if not model_path.exists():
-        print("[wakeword] telechargement du modele hey_jarvis en onnx...", flush=True)
         download_models(model_names=["hey_jarvis"], target_directory=str(models_dir))
 
     if not model_path.exists():
@@ -107,7 +106,6 @@ class PermanentSpeechListener:
         self._wakeword_hits = 0
         self._last_block_report = 0.0
         self._wakeword_cooldown_until = 0.0
-        print(f"[wakeword] modele charge: {self._wakeword_key}", flush=True)
 
     def _load_whisper(self) -> WhisperModel:
         if self._whisper_model is None:
@@ -120,7 +118,7 @@ class PermanentSpeechListener:
 
     def _audio_callback(self, indata, frames, time_info, status) -> None:  # type: ignore[no-untyped-def]
         if status:
-            print(f"[audio] {status}", flush=True)
+            pass
 
         block = np.asarray(indata[:, 0], dtype=np.float32).copy()
         try:
@@ -129,7 +127,6 @@ class PermanentSpeechListener:
             pass
 
     def _transcribe(self, audio: np.ndarray) -> str:
-        print(f"[whisper] transcription de {len(audio) / self.config.sample_rate:.2f}s d'audio...", flush=True)
         whisper_model = self._load_whisper()
         segments, _info = whisper_model.transcribe(
             audio,
@@ -149,21 +146,15 @@ class PermanentSpeechListener:
         return _clean_text(transcript)
 
     def _ask_brain(self, question: str) -> str:
-        print(f"[brain] question: {question}", flush=True)
-        print("[brain] reponse: ", end="", flush=True)
-
         answer_text = voice_brain.ask_and_speak(
             question=question,
             system_prompt=(
                 "Tu es Jarvis. Reponds en francais, de facon directe, courte et utile."
             ),
             temperature=0.0,
-            echo=True,
         )
 
         answer_text = _clean_text(answer_text)
-        if not answer_text:
-            print("[brain] reponse vide", flush=True)
         return answer_text
 
     def _handle_idle_block(self, block: np.ndarray) -> bool:
@@ -177,11 +168,6 @@ class PermanentSpeechListener:
         score = float(scores.get(self._wakeword_key, 0.0))
 
         if now - self._last_block_report >= 5.0:
-            rms = _audio_rms(block)
-            print(
-                f"[audio] attente du wake word | rms={rms:.4f} | score={score:.3f} | keys={list(scores.keys())}",
-                flush=True,
-            )
             self._last_block_report = now
 
         if score >= self.config.wakeword_threshold:
@@ -190,7 +176,6 @@ class PermanentSpeechListener:
             self._wakeword_hits = 0
 
         if self._wakeword_hits >= 2:
-            print(f"[wakeword] {self._wakeword_key} detecte ({score:.2f})", flush=True)
             self._wakeword_hits = 0
             self._wakeword_model.reset()
             self._wakeword_cooldown_until = now + self.config.wakeword_lockout_seconds
@@ -212,8 +197,6 @@ class PermanentSpeechListener:
     def _collect_until_silence(self, first_block: np.ndarray) -> None:
         self._wakeword_cooldown_until = time.monotonic() + self.config.wakeword_lockout_seconds
         drained_blocks = self._drain_audio_queue()
-        if drained_blocks:
-            print(f"[listen] file audio videe avant capture | blocs ignores={drained_blocks}", flush=True)
 
         captured_blocks: list[np.ndarray] = list(self._pre_roll)
         captured_blocks.append(first_block)
@@ -222,8 +205,6 @@ class PermanentSpeechListener:
         start_time = time.monotonic()
         speech_detected = _audio_rms(first_block) >= self.config.speech_rms_threshold
         last_voice_time = start_time if speech_detected else 0.0
-
-        print("[listen] debut de la capture post-wakeword...", flush=True)
 
         while not self._stop_requested:
             try:
@@ -236,8 +217,6 @@ class PermanentSpeechListener:
                 captured_blocks.append(block)
                 rms = _audio_rms(block)
                 if rms >= self.config.speech_rms_threshold:
-                    if not speech_detected:
-                        print(f"[listen] voix detectee | rms={rms:.4f}", flush=True)
                     last_voice_time = now
                     speech_detected = True
 
@@ -245,38 +224,28 @@ class PermanentSpeechListener:
             silence_elapsed = now - last_voice_time if speech_detected else 0.0
 
             if speech_detected and elapsed >= self.config.min_speech_seconds and silence_elapsed >= self.config.silence_seconds:
-                print("[listen] silence detecte, fin de la phrase.", flush=True)
                 break
 
             if elapsed >= self.config.max_utterance_seconds:
-                print("[listen] limite maximale atteinte, transcription finale.", flush=True)
                 break
 
         audio = np.concatenate(captured_blocks)
         try:
             text = self._transcribe(audio)
-        except Exception as exc:
-            print(f"[whisper] erreur de transcription: {exc}", flush=True)
+        except Exception:
             return
 
         if text:
-            print(f"[final] {text}", flush=True)
             try:
                 self._ask_brain(text)
-            except Exception as exc:
-                print(f"[brain] erreur: {exc}", flush=True)
-        else:
-            print("[final] (aucune transcription detectee)", flush=True)
+            except Exception:
+                pass
 
         self._wakeword_model.reset()
         self._wakeword_cooldown_until = time.monotonic() + self.config.wakeword_lockout_seconds
         drained_blocks = self._drain_audio_queue()
-        if drained_blocks:
-            print(f"[wakeword] remise a zero apres transcription | blocs ignores={drained_blocks}", flush=True)
 
     def run(self) -> None:
-        print("[listen] initialisation du micro...", flush=True)
-        print(f"[listen] pret. Dis 'Hey Jarvis' puis parle.", flush=True)
         with sd.InputStream(
             samplerate=self.config.sample_rate,
             blocksize=self.config.block_size,
@@ -284,10 +253,6 @@ class PermanentSpeechListener:
             dtype="float32",
             callback=self._audio_callback,
         ):
-            print(
-                f"[listen] micro ouvert | sample_rate={self.config.sample_rate} | block_size={self.config.block_size}",
-                flush=True,
-            )
             while not self._stop_requested:
                 if time.monotonic() < self._wakeword_cooldown_until:
                     try:
@@ -346,7 +311,6 @@ def main() -> None:
         listener.run()
     except KeyboardInterrupt:
         listener.stop()
-        print("\n[listen] arrete.", flush=True)
 
 
 if __name__ == "__main__":

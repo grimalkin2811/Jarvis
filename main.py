@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import sys
 from typing import Sequence
 
 
@@ -18,7 +19,6 @@ def _run_listen(args: argparse.Namespace) -> int:
         listener.run()
     except KeyboardInterrupt:
         listener.stop()
-        print("\n[listen] arrete.")
     return 0
 
 
@@ -89,6 +89,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
+    if argv is None and len(sys.argv) == 1:
+        argv = ["listen"]
     args = parser.parse_args(argv)
     return args.func(args)
 

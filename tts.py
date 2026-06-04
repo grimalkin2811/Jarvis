@@ -111,10 +111,8 @@ def _ensure_model_assets() -> Path:
     archive_path = MODELS_DIR / f"{DEFAULT_MODEL_NAME}.tar.bz2"
 
     if not archive_path.exists():
-        print(f"[TTS] Telechargement du modele {DEFAULT_MODEL_NAME}...")
         _download_file(DEFAULT_MODEL_ARCHIVE_URL, archive_path)
 
-    print(f"[TTS] Extraction du modele {DEFAULT_MODEL_NAME}...")
     _safe_extract_tar(archive_path, MODELS_DIR)
 
     try:
@@ -233,8 +231,8 @@ class StreamingSpeaker:
                     speed=self._speed,
                 )
                 self._play_audio(generated.samples, generated.sample_rate)
-            except Exception as exc:
-                print(f"[TTS] Erreur pendant la synthèse ou la lecture: {exc}")
+            except Exception:
+                pass
 
     def speak(self, text: str) -> None:
         if self._closed:
@@ -274,8 +272,6 @@ def parler(
 
 
 if __name__ == "__main__":
-    print("Voix détectées :", available_voices())
-    print("-" * 50)
     parler(
         "Bonjour Simon. Ceci est un test avec sherpa-onnx et le nouveau moteur TTS."
     )

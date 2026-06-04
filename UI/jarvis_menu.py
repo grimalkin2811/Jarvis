@@ -547,15 +547,6 @@ class MorphingOrbWidget(QWidget):
             line1 = f"DBG t={self.time:.3f} raw_dist={raw_dist:.2f} visual_radius={visual_radius:.2f} is_outside={is_outside} proximity={proximity:.3f}\n"
             line2 = f"     cursor=({self.cursor.x():.1f},{self.cursor.y():.1f}) current_center=({self.current_center.x():.1f},{self.current_center.y():.1f}) offset=({self.offset_x:.2f},{self.offset_y:.2f})\n"
             aligns_lines = "".join([f"     align_{name}={val:.3f}\n" for name, val in aligns])
-            # print to console if visible
-            try:
-                print(line1.strip())
-                print(line2.strip())
-                for name, val in aligns:
-                    print(f"     align_{name}={val:.3f}")
-            except Exception:
-                pass
-
             # throttle file writes to ~8Hz
             if self._debug_last_write < 0 or (self.time - self._debug_last_write) >= 0.12:
                 try:
@@ -705,7 +696,6 @@ class MorphingOrbWidget(QWidget):
         if event.key() == Qt.Key_D:
             self.debug_mode = not getattr(self, 'debug_mode', False)
             msg = f"debug_mode={self.debug_mode}\n"
-            print(msg.strip())
             try:
                 with open(self._debug_log_path, "a", encoding="utf-8") as f:
                     f.write(msg)

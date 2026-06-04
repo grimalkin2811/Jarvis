@@ -95,7 +95,7 @@ def save_state(state: AppearanceState, path: str) -> None:
 
 
 def _print_action(name: str) -> None:
-    print(f"[appearance] {name}")
+    return None
 
 
 def set_theme_blue(state: AppearanceState) -> None:

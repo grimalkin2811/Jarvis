@@ -68,9 +68,16 @@ def _resolve_default_model() -> str:
     if not available:
         raise RuntimeError("Aucun modele Ollama n'est installe.")
 
-    qwen = _find_model(["qwen2.5:0.5b", "qwen2.5:1.5b", "qwen2.5", "qwen"], available)
-    if qwen:
-        return qwen
+    mistral = _find_model(
+        [
+            "mistral:7b-instruct",
+            "mistral:7b",
+            "mistral",
+        ],
+        available,
+    )
+    if mistral:
+        return mistral
 
     return available[0]
 
@@ -142,7 +149,7 @@ def ask(
     """
     Pose une question a Ollama.
 
-    Pour l'instant, toutes les questions sont envoyees a qwen2.5:1.5b.
+    Pour l'instant, le modele par defaut est Mistral 7B quand il est disponible.
     """
     if not question or not question.strip():
         raise ValueError("La question ne peut pas etre vide.")
@@ -176,9 +183,9 @@ def ask(
     if return_metadata:
         return {
             "answer": answer,
-            "selected_route": "qwen2.5:0.5b",
+            "selected_route": "mistral:7b",
             "selected_model": selected_model,
-            "routing_reason": "Routage temporairement desactive: qwen2.5:0.5b est force par defaut.",
+            "routing_reason": "Routage temporairement desactive: Mistral 7B est force par defaut.",
         }
 
     return answer

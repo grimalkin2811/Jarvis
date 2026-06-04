@@ -73,15 +73,32 @@ def _split_ready_chunks(
     return ready, buffer[residual_start:]
 
 
+def _extract_first_sentence(buffer: str) -> tuple[str | None, str]:
+    trimmed = buffer.strip()
+    if not trimmed:
+        return None, buffer
+
+    sentence_match = re.search(r"^(.+?[.!?;:])(?:\s|$)", trimmed, re.DOTALL)
+    if not sentence_match:
+        return None, buffer
+
+    sentence = sentence_match.group(1).strip()
+    remainder = trimmed[sentence_match.end():].lstrip()
+    return sentence, remainder
+
+
 def ask_and_speak(
     question: str,
     system_prompt: Optional[str] = None,
     temperature: float = 0.2,
-    echo: bool = True,
-    lead_chunks: int = 2,
+    echo: bool = False,
+    lead_chunks: int = 1,
 ) -> str:
     """
-    Stream la reponse de brain.py et la lit a voix haute par segments plus naturels.
+    Stream la reponse de brain.py et la lit a voix haute.
+
+    On attend juste la fin de la première phrase avant de lancer sherpa,
+    puis on reprend le découpage classique pour le reste.
     """
     speaker = tts.StreamingSpeaker()
     answer_parts: list[str] = []
@@ -98,14 +115,14 @@ def ask_and_speak(
             answer_parts.append(chunk)
             chunk_buffer += chunk
 
-            if echo:
-                print(chunk, end="", flush=True)
+            if not speech_started:
+                first_sentence, chunk_buffer = _extract_first_sentence(chunk_buffer)
+                if first_sentence:
+                    speaker.speak(first_sentence)
+                    speech_started = True
 
             ready_chunks, chunk_buffer = _split_ready_chunks(chunk_buffer)
             pending_chunks.extend(ready_chunks)
-
-            if not speech_started and len(pending_chunks) >= lead_chunks:
-                speech_started = True
 
             if speech_started:
                 while pending_chunks:
@@ -113,16 +130,17 @@ def ask_and_speak(
 
         trailing = chunk_buffer.strip()
         if trailing:
-            pending_chunks.append(trailing)
+            if not speech_started:
+                speaker.speak(trailing)
+                speech_started = True
+            else:
+                pending_chunks.append(trailing)
 
         if pending_chunks:
             for text_chunk in pending_chunks:
                 speaker.speak(text_chunk)
 
         full_answer = "".join(answer_parts).strip()
-        if echo and full_answer:
-            print()
-
         return full_answer
     finally:
         speaker.close()
