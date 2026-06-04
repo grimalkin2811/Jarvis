@@ -2,8 +2,7 @@
 # Install Python packages with: pip install -r requirements.txt
 
 # Python packages
-RealtimeTTS
-nltk
+sherpa-onnx
 numpy
 sounddevice
 faster-whisper

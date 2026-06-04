@@ -1,24 +1,46 @@
+from __future__ import annotations
+
 import queue
 import re
+import tarfile
 import threading
-import time
-import winreg
+import urllib.request
 from collections.abc import Iterator
+from functools import lru_cache
+from pathlib import Path
 from typing import Final
 
-from RealtimeTTS import SystemEngine, TextToAudioStream
+import numpy as np
+import sherpa_onnx
+import sounddevice as sd
 
 
-DEFAULT_VOICE_HINTS: Final[tuple[str, ...]] = (
-    "Paul",
-    "Microsoft Paul",
-    "French",
-    "Hortense",
+BASE_DIR: Final[Path] = Path(__file__).resolve().parent
+MODELS_DIR: Final[Path] = BASE_DIR / "models" / "tts"
+DEFAULT_MODEL_NAME: Final[str] = "vits-piper-fr_FR-siwis-medium"
+DEFAULT_MODEL_ARCHIVE_URL: Final[str] = (
+    "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/"
+    f"{DEFAULT_MODEL_NAME}.tar.bz2"
 )
+DEFAULT_MODEL_DIR: Final[Path] = MODELS_DIR / DEFAULT_MODEL_NAME
+DEFAULT_MODEL_PATH: Final[Path] = DEFAULT_MODEL_DIR / "fr_FR-siwis-medium.onnx"
+DEFAULT_TOKENS_PATH: Final[Path] = DEFAULT_MODEL_DIR / "tokens.txt"
+DEFAULT_DATA_DIR: Final[Path] = DEFAULT_MODEL_DIR / "espeak-ng-data"
+DEFAULT_SPEAKER_ID: Final[int] = 0
 DEFAULT_RATE: Final[int] = 175
 DEFAULT_VOLUME: Final[float] = 1.0
 DEFAULT_BUFFER_THRESHOLD_SECONDS: Final[float] = 1.2
 _STOP = object()
+
+_VOICE_ALIASES: Final[tuple[str, ...]] = (
+    DEFAULT_MODEL_NAME,
+    "default",
+    "fr",
+    "french",
+    "francais",
+    "gilles",
+    "siwis",
+)
 
 
 def _normalize_text(text: str) -> str:
@@ -34,73 +56,127 @@ def _split_sentences(text: str) -> list[str]:
     return [part.strip() for part in parts if part.strip()]
 
 
-def _get_absolute_onecore_voices() -> dict[str, str]:
-    """Scanne le registre Windows pour associer le nom d'une voix OneCore à son ID absolu."""
-    voices_map = {}
-    path = r"SOFTWARE\Microsoft\Speech_OneCore\Voices\Tokens"
+def _rate_to_speed(rate: int) -> float:
+    if rate <= 0:
+        return 0.75
+    return max(0.5, min(1.8, rate / float(DEFAULT_RATE)))
+
+
+def _safe_extract_tar(archive_path: Path, destination: Path) -> None:
+    destination = destination.resolve()
+
+    def _is_within_destination(path: Path) -> bool:
+        try:
+            path.resolve().relative_to(destination)
+            return True
+        except ValueError:
+            return False
+
+    with tarfile.open(archive_path, mode="r:bz2") as tar:
+        for member in tar.getmembers():
+            member_path = destination / member.name
+            if not _is_within_destination(member_path):
+                raise RuntimeError(
+                    f"Archive TTS invalide: chemin inattendu '{member.name}'."
+                )
+        tar.extractall(path=destination)
+
+
+def _download_file(url: str, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with urllib.request.urlopen(url, timeout=300) as response, destination.open(
+        "wb"
+    ) as handle:
+        while True:
+            chunk = response.read(1024 * 1024)
+            if not chunk:
+                break
+            handle.write(chunk)
+
+
+def _model_assets_ready() -> bool:
+    return (
+        DEFAULT_MODEL_PATH.exists()
+        and DEFAULT_TOKENS_PATH.exists()
+        and DEFAULT_DATA_DIR.exists()
+    )
+
+
+def _ensure_model_assets() -> Path:
+    if _model_assets_ready():
+        return DEFAULT_MODEL_DIR
+
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    archive_path = MODELS_DIR / f"{DEFAULT_MODEL_NAME}.tar.bz2"
+
+    if not archive_path.exists():
+        print(f"[TTS] Telechargement du modele {DEFAULT_MODEL_NAME}...")
+        _download_file(DEFAULT_MODEL_ARCHIVE_URL, archive_path)
+
+    print(f"[TTS] Extraction du modele {DEFAULT_MODEL_NAME}...")
+    _safe_extract_tar(archive_path, MODELS_DIR)
+
     try:
-        key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
-        for i in range(winreg.QueryInfoKey(key)[0]):
-            subkey_name = winreg.EnumKey(key, i)
-            subkey = winreg.OpenKey(key, subkey_name)
-            try:
-                voice_name = winreg.QueryValueEx(subkey, "")[0]
-                full_id = rf"HKEY_LOCAL_MACHINE\{path}\{subkey_name}"
-                voices_map[voice_name] = full_id
-            except:
-                continue
-    except Exception:
+        archive_path.unlink()
+    except OSError:
         pass
-    return voices_map
+
+    if not _model_assets_ready():
+        raise RuntimeError(
+            "Le modele sherpa-onnx n'a pas pu etre prepare correctement."
+        )
+
+    return DEFAULT_MODEL_DIR
 
 
-def _pick_voice(engine: SystemEngine, preferred: str | None = None) -> str:
-    # 1. On récupère d'abord les voix classiques de l'engine (SAPI5, ou OneCore unifiées)
-    engine_voices = engine.get_voices()
-    
-    # 2. On récupère aussi les voix OneCore cachées via le registre
-    onecore_voices = _get_absolute_onecore_voices()
+@lru_cache(maxsize=1)
+def _build_tts_engine() -> sherpa_onnx.OfflineTts:
+    model_dir = _ensure_model_assets()
 
-    hints = [preferred] if preferred else list(DEFAULT_VOICE_HINTS)
+    config = sherpa_onnx.OfflineTtsConfig(
+        model=sherpa_onnx.OfflineTtsModelConfig(
+            vits=sherpa_onnx.OfflineTtsVitsModelConfig(
+                model=str(model_dir / "fr_FR-siwis-medium.onnx"),
+                tokens=str(model_dir / "tokens.txt"),
+                data_dir=str(model_dir / "espeak-ng-data"),
+            ),
+            num_threads=1,
+            debug=False,
+        )
+    )
+    if not config.validate():
+        raise RuntimeError("La configuration sherpa-onnx est invalide.")
 
-    # Étape A : On cherche d'abord dans les voix actives de l'engine (SAPI5 classiques, ou OneCore unifiées)
-    for hint in hints:
-        if not hint:
-            continue
-        hint_lower = hint.lower()
-        for v in engine_voices:
-            if hint_lower in v.name.lower() or hint_lower in v.id.lower():
-                return v.id
+    return sherpa_onnx.OfflineTts(config)
 
-    # Étape B : Si pas trouvé dans SAPI5, on cherche dans les voix OneCore cachées (Paul, Julie...)
-    for hint in hints:
-        if not hint:
-            continue
-        hint_lower = hint.lower()
-        for name, full_id in onecore_voices.items():
-            if hint_lower in name.lower():
-                return full_id
 
-    # Étape C : Fallback ultime
-    if engine_voices:
-        return engine_voices[0].id
-    return ""
+def _pick_voice(preferred: str | None = None) -> int:
+    if not preferred:
+        return DEFAULT_SPEAKER_ID
+
+    normalized = preferred.strip().lower()
+    if normalized in _VOICE_ALIASES:
+        return DEFAULT_SPEAKER_ID
+
+    return DEFAULT_SPEAKER_ID
 
 
 def available_voices() -> list[str]:
-    engine = SystemEngine()
-    try:
-        # Affiche à la fois les voix classiques et détecte les OneCore dans le registre
-        onecore = list(_get_absolute_onecore_voices().keys())
-        classic = [voice.name for voice in engine.get_voices()]
-        return list(set(onecore + classic))
-    finally:
-        engine.shutdown()
+    return [
+        "fr_FR-siwis-medium",
+        "gilles",
+        "siwis",
+        "french",
+        "default",
+    ]
 
 
 class StreamingSpeaker:
     """
-    Speaker basé sur RealtimeTTS + SystemEngine (avec bypass Registre OneCore).
+    Speaker basé sur sherpa_onnx OfflineTts.
+
+    Le moteur n'est pas natif streaming, donc on synthétise chaque chunk
+    séparément puis on le lit dans l'ordre au fil de l'eau.
     """
 
     def __init__(
@@ -112,30 +188,13 @@ class StreamingSpeaker:
     ) -> None:
         self._queue: queue.Queue[object] = queue.Queue()
         self._closed = False
-        self._engine = SystemEngine()
-        
-        # 1. Recherche de l'ID de la voix (Paul ciblé via son chemin absolu)
-        self.voice_id = _pick_voice(self._engine, voice)
-        print(f"[TTS] ID Voix appliqué : {self.voice_id}")
-        
-        # 2. Création du stream
-        self._stream = TextToAudioStream(
-            self._engine,
-            language="fr",
-            tokenizer="nltk",
-            muted=False,
-        )
-        
-        # 3. On force l'ID absolu sur le moteur après l'init du stream
-        try:
-            self._engine.set_voice(self.voice_id)
-        except Exception as e:
-            print(f"[TTS] Erreur lors du set_voice initial, tentative de forçage direct : {e}")
-            
-        self._engine.set_voice_parameters(rate=rate, volume=volume)
-        
+        self._tts = _build_tts_engine()
+        self._speaker_id = _pick_voice(voice)
+        self._speed = _rate_to_speed(rate)
+        self._volume = max(0.0, volume)
         self._buffer_threshold_seconds = buffer_threshold_seconds
-        self._playback_started = threading.Event()
+        self.voice_id = self._speaker_id
+        self.voice_name = DEFAULT_MODEL_NAME
         self._worker = threading.Thread(target=self._run, daemon=True)
         self._worker.start()
 
@@ -152,34 +211,28 @@ class StreamingSpeaker:
             finally:
                 self._queue.task_done()
 
+    def _play_audio(self, samples: list[float], sample_rate: int) -> None:
+        audio = np.asarray(samples, dtype=np.float32)
+        if audio.size == 0:
+            return
+
+        if self._volume != 1.0:
+            audio = np.clip(audio * self._volume, -1.0, 1.0)
+
+        sd.play(audio, samplerate=sample_rate)
+        sd.wait()
+
     def _run(self) -> None:
-        iterator = self._text_iterator()
-        self._stream.feed(iterator)
-        
-        # On remet une couche juste avant le play pour s'assurer que l'engine n'a pas bougé
-        try:
-            self._engine.set_voice(self.voice_id)
-        except:
-            pass
-
-        self._stream.play_async(
-            fast_sentence_fragment=False,
-            fast_sentence_fragment_allsentences=False,
-            buffer_threshold_seconds=self._buffer_threshold_seconds,
-            minimum_sentence_length=18,
-            minimum_first_fragment_length=18,
-            tokenizer="nltk",
-            tokenize_sentences=_split_sentences,
-            language="fr",
-            sentence_fragment_delimiters=".?!;:\n",
-            comma_silence_duration=0.05,
-            sentence_silence_duration=0.12,
-            default_silence_duration=0.05,
-        )
-        self._playback_started.set()
-
-        while self._stream.is_playing():
-            time.sleep(0.05)
+        for text in self._text_iterator():
+            try:
+                generated = self._tts.generate(
+                    text=text,
+                    sid=self._speaker_id,
+                    speed=self._speed,
+                )
+                self._play_audio(generated.samples, generated.sample_rate)
+            except Exception as exc:
+                print(f"[TTS] Erreur pendant la synthèse ou la lecture: {exc}")
 
     def speak(self, text: str) -> None:
         if self._closed:
@@ -193,13 +246,13 @@ class StreamingSpeaker:
         self._closed = True
         self._queue.put(_STOP)
         self._queue.join()
-        self._playback_started.wait(timeout=5)
         self._worker.join(timeout=60)
-        try:
-            self._stream.stop()
-        except Exception:
-            pass
-        self._engine.shutdown()
+        if self._worker.is_alive():
+            try:
+                sd.stop()
+            except Exception:
+                pass
+            self._worker.join(timeout=5)
 
 
 def parler(
@@ -209,7 +262,7 @@ def parler(
     volume: float = DEFAULT_VOLUME,
 ) -> None:
     """
-    Lit un texte complet de façon bloquante avec RealtimeTTS/SystemEngine.
+    Lit un texte complet de façon bloquante avec sherpa_onnx.
     """
     speaker = StreamingSpeaker(voice=voice, rate=rate, volume=volume)
     try:
@@ -219,7 +272,8 @@ def parler(
 
 
 if __name__ == "__main__":
-    print("Voix globales détectées (Classiques + Modernes) :", available_voices())
+    print("Voix détectées :", available_voices())
     print("-" * 50)
-    
-    parler("Bonjour Simon ! Ceci est un test avec le script mis à jour. Normalement, c'est bien la voix de Paul qui doit s'activer maintenant.")
+    parler(
+        "Bonjour Simon. Ceci est un test avec sherpa-onnx et le nouveau moteur TTS."
+    )

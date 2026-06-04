@@ -1,0 +1,52 @@
+debug_mode=True
+DBG t=10.960 raw_dist=243.19 visual_radius=235.25 is_outside=False proximity=0.687
+     cursor=(540.0,103.0) current_center=(548.5,346.0) offset=(-1.28,-33.97)
+     align_right=-0.035
+     align_down=-0.999
+     align_left=0.035
+     align_up=0.999
+DBG t=11.100 raw_dist=243.18 visual_radius=247.21 is_outside=False proximity=0.678
+     cursor=(540.0,103.0) current_center=(548.6,346.0) offset=(-1.25,-33.98)
+     align_right=-0.036
+     align_down=-0.999
+     align_left=0.036
+     align_up=0.999
+DBG t=11.240 raw_dist=243.18 visual_radius=238.67 is_outside=True proximity=1.000
+     cursor=(540.0,103.0) current_center=(548.7,346.0) offset=(-1.24,-33.98)
+     align_right=-0.036
+     align_down=-0.999
+     align_left=0.036
+     align_up=0.999
+DBG t=11.380 raw_dist=243.18 visual_radius=241.60 is_outside=False proximity=0.690
+     cursor=(540.0,103.0) current_center=(548.7,346.0) offset=(-1.23,-33.98)
+     align_right=-0.036
+     align_down=-0.999
+     align_left=0.036
+     align_up=0.999
+debug_mode=False
+debug_mode=True
+DBG t=31.240 raw_dist=109.52 visual_radius=135.35 is_outside=False proximity=0.545
+     cursor=(1067.0,560.0) current_center=(959.2,540.6) offset=(1.61,0.90)
+     align_right=0.984
+     align_down=0.178
+     align_left=-0.984
+     align_up=-0.178
+DBG t=31.380 raw_dist=105.87 visual_radius=168.60 is_outside=False proximity=0.357
+     cursor=(1067.0,560.0) current_center=(962.8,541.1) offset=(7.90,1.76)
+     align_right=0.984
+     align_down=0.179
+     align_left=-0.984
+     align_up=-0.179
+DBG t=31.520 raw_dist=102.42 visual_radius=172.60 is_outside=False proximity=0.321
+     cursor=(1067.0,560.0) current_center=(966.3,541.5) offset=(10.05,2.01)
+     align_right=0.984
+     align_down=0.180
+     align_left=-0.984
+     align_up=-0.180
+DBG t=31.660 raw_dist=70.32 visual_radius=140.91 is_outside=False proximity=0.270
+     cursor=(909.0,582.0) current_center=(966.9,542.1) offset=(4.48,3.39)
+     align_right=-0.824
+     align_down=0.567
+     align_left=0.824
+     align_up=-0.567
+debug_mode=False
