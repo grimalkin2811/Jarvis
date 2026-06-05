@@ -20,9 +20,11 @@ pip-wheel-metadata/
 # Installer / setup artifacts
 setup_s/
 
-# Ensure these project files are tracked (un-ignore)
-!UI/system_actions.py
-!UI/system_changes.py
+# Ensure the UI folder is tracked, but still ignore its __pycache__ folders
+!UI/
+UI/**/__pycache__/
+
+# Ensure specific top-level system files are tracked
 !system_actions.py
 !system_changes.py
 
