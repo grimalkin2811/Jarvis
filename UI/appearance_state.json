@@ -2,7 +2,7 @@
   "theme_name": "purple",
   "glow_intensity": 2.0,
   "blob_scale": 1.0,
-  "time_scale": 1.25,
+  "time_scale": 1.05,
   "minimal_mode": false,
-  "cinematic_mode": false
+  "cinematic_mode": true
 }

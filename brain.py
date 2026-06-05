@@ -1,11 +1,15 @@
 import json
 import urllib.error
 import urllib.request
+from pathlib import Path
 from functools import lru_cache
 from typing import Any, Iterator
 
+from UI import system_actions
+
 
 OLLAMA_URL = "http://127.0.0.1:11434"
+SYSTEM_STATE_PATH = Path(__file__).resolve().parent / "UI" / "system_state.json"
 
 
 def _post_json(path: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -62,20 +66,18 @@ def _find_model(candidates: list[str], available: list[str]) -> str | None:
     return None
 
 
-@lru_cache(maxsize=1)
 def _resolve_default_model() -> str:
     available = _available_models()
     if not available:
         raise RuntimeError("Aucun modele Ollama n'est installe.")
 
-    mistral = _find_model(
-        [
-            "mistral:7b-instruct",
-            "mistral:7b",
-            "mistral",
-        ],
-        available,
-    )
+    state = system_actions.load_state(str(SYSTEM_STATE_PATH))
+    perf_mode = system_actions.perf_mode_info(state)
+    selected = _find_model(perf_mode["model_candidates"], available)
+    if selected:
+        return selected
+
+    mistral = _find_model(["mistral:7b-instruct", "mistral:7b", "mistral"], available)
     if mistral:
         return mistral
 
@@ -149,7 +151,7 @@ def ask(
     """
     Pose une question a Ollama.
 
-    Pour l'instant, le modele par defaut est Mistral 7B quand il est disponible.
+    Le modele par defaut suit le mode de performance sauvegarde par Jarvis.
     """
     if not question or not question.strip():
         raise ValueError("La question ne peut pas etre vide.")
@@ -181,11 +183,13 @@ def ask(
     answer = final_response.get("message", {}).get("content", "").strip()
 
     if return_metadata:
+        state = system_actions.load_state(str(SYSTEM_STATE_PATH))
+        perf_mode = system_actions.perf_mode_info(state)
         return {
             "answer": answer,
-            "selected_route": "mistral:7b",
+            "selected_route": perf_mode["label"].lower(),
             "selected_model": selected_model,
-            "routing_reason": "Routage temporairement desactive: Mistral 7B est force par defaut.",
+            "routing_reason": f"Mode performance {perf_mode['label']} -> {perf_mode['model_label']}.",
         }
 
     return answer

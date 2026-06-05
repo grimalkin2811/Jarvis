@@ -1,3 +1,66 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+build/
+dist/
+eggs/
+*.egg-info/
+pip-wheel-metadata/
+*.egg
+
+# PyInstaller
+*.spec
+
+# Installer / setup artifacts
+setup_s/
+
+# Ensure these project files are tracked (un-ignore)
+!UI/system_actions.py
+!UI/system_changes.py
+!system_actions.py
+!system_changes.py
+
+*.iss
+Output/
+*.msi
+
+# Models and large data (ignore if you keep model files in repo, remove if not)
+models/
+
+# Virtual environments
+env/
+venv/
+.venv/
+
+# IDEs and editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Logs and databases
+*.log
+*.sqlite3
+
+# System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Pycache and bytecode
+*.pyc
+*.pyo
+*.pyd
+
+# Misc
+*.tmp
+*.bak
 venv/
 __pycache__/
 *.pyc
@@ -9,3 +72,4 @@ __pycache__/
 
 models/tts/
 *.tar.bz2
+setup_s/

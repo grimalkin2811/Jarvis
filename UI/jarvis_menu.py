@@ -29,6 +29,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import QApplication, QWidget
 
 import appearance_actions
+import system_actions
 
 
 voice_energy = 0.0
@@ -191,6 +192,8 @@ class MorphingOrbWidget(QWidget):
         self._appearance_state_path = os.path.join(os.path.dirname(__file__), "appearance_state.json")
         self.appearance_state = appearance_actions.load_state(self._appearance_state_path)
         self._apply_appearance_state()
+        self._system_state_path = os.path.join(os.path.dirname(__file__), "system_state.json")
+        self.system_state = system_actions.load_state(self._system_state_path)
 
         # STATE
         self.center = QPointF(self.width() / 2, self.height() / 2)
@@ -689,6 +692,7 @@ class MorphingOrbWidget(QWidget):
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
             appearance_actions.save_state(self.appearance_state, self._appearance_state_path)
+            system_actions.save_state(self.system_state, self._system_state_path)
             self.close()
             return
 
@@ -707,6 +711,7 @@ class MorphingOrbWidget(QWidget):
 
     def closeEvent(self, event):
         appearance_actions.save_state(self.appearance_state, self._appearance_state_path)
+        system_actions.save_state(self.system_state, self._system_state_path)
         super().closeEvent(event)
 
     # =========================================================
@@ -799,6 +804,8 @@ class MorphingOrbWidget(QWidget):
     def _menu_callback_for(self, spec: MenuSpec, item: MenuItemSpec) -> Callable[[], None]:
         if spec.name == "Appearance":
             return self._appearance_callback_for(item)
+        if spec.name == "System":
+            return self._system_callback_for(item)
 
         def _callback() -> None:
             key = f"{spec.name}:{item.label}"
@@ -811,6 +818,22 @@ class MorphingOrbWidget(QWidget):
                 self._menu_action_flash = item.label
             else:
                 self._menu_action_flash = item.label
+            self._menu_action_flash_time = self.time
+
+        return _callback
+
+    def _system_callback_for(self, item: MenuItemSpec) -> Callable[[], None]:
+        def _callback() -> None:
+            if item.label == "Perf Mode":
+                system_actions.cycle_perf_mode(self.system_state)
+                system_actions.save_state(self.system_state, self._system_state_path)
+                self._menu_action_flash = f"Perf Mode: {self.system_state.perf_mode_label}"
+                self._menu_action_flash_time = self.time
+                return
+            key = f"System:{item.label}"
+            self._menu_toggle_state[key] = not self._menu_toggle_state.get(key, False)
+            state = "on" if self._menu_toggle_state[key] else "off"
+            self._menu_action_flash = f"{item.label} {state}"
             self._menu_action_flash_time = self.time
 
         return _callback
@@ -841,6 +864,9 @@ class MorphingOrbWidget(QWidget):
         self.bg = QColor(state.bg_color)
         self.text_color = QColor(state.text_color)
         self.time_scale = state.time_scale
+
+    def _apply_system_state(self) -> None:
+        pass
 
     def _menu_anchor(self, spec: MenuSpec, reveal: float) -> tuple[QPointF, float, float, float, float]:
         sector_index = MENU_SPECS.index(spec)
@@ -1073,6 +1099,8 @@ class MorphingOrbWidget(QWidget):
         label_text = node.label
         if spec.name == "Appearance" and node.label == "Color":
             label_text = f"Color: {self.appearance_state.theme_name.capitalize()}"
+        if spec.name == "System" and node.label == "Perf Mode":
+            label_text = f"Perf: {self.system_state.perf_mode_label}"
         if node.label == "Long-term Memory":
             label_text = "Long-term\nMemory"
             label_rect = QRectF(label_rect.x(), label_rect.y() - 3.0, label_rect.width(), 30.0)
