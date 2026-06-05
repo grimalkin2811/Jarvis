@@ -1,5 +1,5 @@
 import re
-from typing import Optional
+from typing import Callable, Optional
 
 import brain
 import tts
@@ -93,6 +93,7 @@ def ask_and_speak(
     temperature: float = 0.2,
     echo: bool = False,
     lead_chunks: int = 1,
+    presence_hook: Callable[[str], None] | None = None,
 ) -> str:
     """
     Stream la reponse de brain.py et la lit a voix haute.
@@ -107,6 +108,8 @@ def ask_and_speak(
     speech_started = False
 
     try:
+        if presence_hook is not None:
+            presence_hook("thinking")
         for chunk in brain.stream_ask(
             question=question,
             system_prompt=system_prompt,
@@ -118,6 +121,8 @@ def ask_and_speak(
             if not speech_started:
                 first_sentence, chunk_buffer = _extract_first_sentence(chunk_buffer)
                 if first_sentence:
+                    if presence_hook is not None:
+                        presence_hook("speaking")
                     speaker.speak(first_sentence)
                     speech_started = True
 
@@ -131,6 +136,8 @@ def ask_and_speak(
         trailing = chunk_buffer.strip()
         if trailing:
             if not speech_started:
+                if presence_hook is not None:
+                    presence_hook("speaking")
                 speaker.speak(trailing)
                 speech_started = True
             else:
@@ -143,7 +150,11 @@ def ask_and_speak(
         full_answer = "".join(answer_parts).strip()
         return full_answer
     finally:
-        speaker.close()
+        try:
+            speaker.close()
+        finally:
+            if presence_hook is not None:
+                presence_hook("hide_overlay")
 
 
 if __name__ == "__main__":

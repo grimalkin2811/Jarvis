@@ -43,6 +43,25 @@ def _run_ui(_args: argparse.Namespace) -> int:
     return ui_main()
 
 
+def _run_desktop(_args: argparse.Namespace) -> int:
+    import sys
+
+    from PySide6.QtWidgets import QApplication
+
+    from UI.jarvis_menu import MorphingOrbWidget
+    from UI.screen_halo_overlay import ScreenHaloOverlay
+
+    app = QApplication(sys.argv)
+    blob_window = MorphingOrbWidget()
+    overlay_window = ScreenHaloOverlay(blob_window.appearance_state)
+
+    blob_window.showFullScreen()
+    overlay_window.show_overlay()
+    overlay_window.hide_overlay()
+
+    return app.exec()
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Lanceur principal de Jarvis.")
     subparsers = parser.add_subparsers(dest="mode", required=True)
@@ -83,6 +102,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     ui = subparsers.add_parser("ui", help="Ouvre l'interface Jarvis.")
     ui.set_defaults(func=_run_ui)
+
+    desktop = subparsers.add_parser(
+        "desktop",
+        help="Ouvre le blob et l'overlay dans le même processus.",
+    )
+    desktop.set_defaults(func=_run_desktop)
 
     return parser
 

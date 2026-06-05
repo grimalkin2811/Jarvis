@@ -6,7 +6,7 @@ import re
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque
+from typing import Callable, Deque
 
 import numpy as np
 import sounddevice as sd
@@ -85,8 +85,13 @@ def _resolve_wakeword_model_path() -> str:
 
 
 class PermanentSpeechListener:
-    def __init__(self, config: ListenerConfig) -> None:
+    def __init__(
+        self,
+        config: ListenerConfig,
+        presence_hook: Callable[[str], None] | None = None,
+    ) -> None:
         self.config = config
+        self._presence_hook = presence_hook
         wakeword_model_path = _resolve_wakeword_model_path()
         self._wakeword_model = WakeWordModel(
             wakeword_models=[wakeword_model_path],
@@ -152,6 +157,7 @@ class PermanentSpeechListener:
                 "Tu es Jarvis. Reponds en francais, de facon directe, courte et utile."
             ),
             temperature=0.0,
+            presence_hook=self._presence_hook,
         )
 
         answer_text = _clean_text(answer_text)
@@ -179,6 +185,8 @@ class PermanentSpeechListener:
             self._wakeword_hits = 0
             self._wakeword_model.reset()
             self._wakeword_cooldown_until = now + self.config.wakeword_lockout_seconds
+            if self._presence_hook is not None:
+                self._presence_hook("listening")
             return True
 
         return False
@@ -233,13 +241,19 @@ class PermanentSpeechListener:
         try:
             text = self._transcribe(audio)
         except Exception:
+            if self._presence_hook is not None:
+                self._presence_hook("hide_overlay")
             return
 
         if text:
             try:
+                if self._presence_hook is not None:
+                    self._presence_hook("thinking")
                 self._ask_brain(text)
             except Exception:
                 pass
+        elif self._presence_hook is not None:
+            self._presence_hook("hide_overlay")
 
         self._wakeword_model.reset()
         self._wakeword_cooldown_until = time.monotonic() + self.config.wakeword_lockout_seconds

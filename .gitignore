@@ -27,7 +27,7 @@ UI/**/__pycache__/
 # Ensure specific top-level system files are tracked
 !system_actions.py
 !system_changes.py
-
+!screen_halo_overlay.py
 *.iss
 Output/
 *.msi
