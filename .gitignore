@@ -75,3 +75,4 @@ __pycache__/
 models/tts/
 *.tar.bz2
 setup_s/
+__pycache__/wake_listener.cpython-311.pyc

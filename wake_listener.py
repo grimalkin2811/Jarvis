@@ -6,14 +6,11 @@ import re
 import time
 from collections import deque
 from dataclasses import dataclass
-from typing import Callable, Deque
+from typing import TYPE_CHECKING, Callable, Deque
 
-import numpy as np
-import sounddevice as sd
-import voice_brain
-from openwakeword import Model as WakeWordModel
-from openwakeword.utils import download_models
-from faster_whisper import WhisperModel
+if TYPE_CHECKING:
+    from faster_whisper import WhisperModel
+    import numpy as np
 
 
 WAKEWORD_NAME = "hey_jarvis"
@@ -52,12 +49,16 @@ def _clean_text(text: str) -> str:
 
 
 def _audio_rms(audio: np.ndarray) -> float:
+    import numpy as np
+
     if audio.size == 0:
         return 0.0
     return float(np.sqrt(np.mean(np.square(audio, dtype=np.float32), dtype=np.float32)))
 
 
 def _to_pcm16(audio: np.ndarray) -> np.ndarray:
+    import numpy as np
+
     clipped = np.clip(audio, -1.0, 1.0)
     return (clipped * 32767.0).astype(np.int16)
 
@@ -67,20 +68,38 @@ def _seconds_to_blocks(seconds: float, sample_rate: int, block_size: int) -> int
 
 
 def _resolve_wakeword_model_path() -> str:
-    import openwakeword
+    print("[jarvis] wake_listener: entree _resolve_wakeword_model_path", flush=True)
+    try:
+        print("[jarvis] wake_listener: tentative d'import openwakeword dans le processus...", flush=True)
+        import openwakeword
+        print("[jarvis] wake_listener: openwakeword import OK", flush=True)
+        print("[jarvis] wake_listener: tentative d'import download_models depuis openwakeword.utils...", flush=True)
+        from openwakeword.utils import download_models
+        print("[jarvis] wake_listener: download_models import OK", flush=True)
+    except Exception as exc:
+        print(f"[jarvis] wake_listener: erreur import openwakeword: {type(exc).__name__}: {exc}", flush=True)
+        raise
     from pathlib import Path
-
     models_dir = Path(openwakeword.__file__).resolve().parent / "resources" / "models"
     model_path = models_dir / "hey_jarvis_v0.1.onnx"
 
+    print(f"[jarvis] wake_listener: recherche modele hotword dans {models_dir}", flush=True)
     if not model_path.exists():
-        download_models(model_names=["hey_jarvis"], target_directory=str(models_dir))
+        print("[jarvis] wake_listener: modele hotword absent, demarrage du telechargement...", flush=True)
+        try:
+            download_models(model_names=["hey_jarvis"], target_directory=str(models_dir))
+        except Exception as exc:
+            print(f"[jarvis] wake_listener: erreur telechargement modele hotword: {type(exc).__name__}: {exc}", flush=True)
+            raise
+        else:
+            print("[jarvis] wake_listener: telechargement modele hotword termine", flush=True)
 
     if not model_path.exists():
         raise RuntimeError(
             "Le modele openWakeWord hey_jarvis_v0.1.onnx est introuvable apres telechargement."
         )
 
+    print(f"[jarvis] wake_listener: modele hotword trouve: {model_path}", flush=True)
     return str(model_path)
 
 
@@ -92,12 +111,33 @@ class PermanentSpeechListener:
     ) -> None:
         self.config = config
         self._presence_hook = presence_hook
-        wakeword_model_path = _resolve_wakeword_model_path()
-        self._wakeword_model = WakeWordModel(
-            wakeword_models=[wakeword_model_path],
-            inference_framework="onnx",
-        )
-        self._wakeword_key = next(iter(self._wakeword_model.models.keys()))
+        print("[jarvis] wake_listener: chargement du modèle hotword", flush=True)
+        try:
+            wakeword_model_path = _resolve_wakeword_model_path()
+            from openwakeword import Model as WakeWordModel
+
+            print("[jarvis] wake_listener: initialisation du détecteur hotword", flush=True)
+            self._wakeword_model = WakeWordModel(
+                wakeword_models=[wakeword_model_path],
+                inference_framework="onnx",
+            )
+            self._wakeword_key = next(iter(self._wakeword_model.models.keys()))
+        except Exception as exc:
+            print(f"[jarvis] wake_listener: erreur initialisation openwakeword: {type(exc).__name__}: {exc}", flush=True)
+
+            class _DummyWakewordModel:
+                def __init__(self) -> None:
+                    self.models = {"dummy": None}
+
+                def predict(self, _block):
+                    return {}
+
+                def reset(self):
+                    return None
+
+            print("[jarvis] wake_listener: utilisation d'un detecteur hotword fictif (aucune détection)", flush=True)
+            self._wakeword_model = _DummyWakewordModel()
+            self._wakeword_key = "dummy"
         self._whisper_model: WhisperModel | None = None
         self._audio_queue: queue.Queue[np.ndarray] = queue.Queue(maxsize=256)
         self._stop_requested = False
@@ -111,17 +151,24 @@ class PermanentSpeechListener:
         self._wakeword_hits = 0
         self._last_block_report = 0.0
         self._wakeword_cooldown_until = 0.0
+        print("[jarvis] wake_listener: initialisé", flush=True)
 
     def _load_whisper(self) -> WhisperModel:
         if self._whisper_model is None:
+            print("[jarvis] whisper: chargement", flush=True)
+            from faster_whisper import WhisperModel
+
             self._whisper_model = WhisperModel(
                 self.config.whisper_model_size,
                 device=self.config.whisper_device,
                 compute_type=self.config.whisper_compute_type,
             )
+            print("[jarvis] whisper: prêt", flush=True)
         return self._whisper_model
 
     def _audio_callback(self, indata, frames, time_info, status) -> None:  # type: ignore[no-untyped-def]
+        import numpy as np
+
         if status:
             pass
 
@@ -132,6 +179,9 @@ class PermanentSpeechListener:
             pass
 
     def _transcribe(self, audio: np.ndarray) -> str:
+        import numpy as np
+
+        print("[jarvis] whisper: transcription", flush=True)
         whisper_model = self._load_whisper()
         segments, _info = whisper_model.transcribe(
             audio,
@@ -148,9 +198,13 @@ class PermanentSpeechListener:
         transcript = " ".join(
             segment.text.strip() for segment in segments if segment.text.strip()
         )
+        print(f"[jarvis] whisper: texte='{_clean_text(transcript)}'", flush=True)
         return _clean_text(transcript)
 
     def _ask_brain(self, question: str) -> str:
+        import voice_brain
+
+        print(f"[jarvis] cerveau: question='{question}'", flush=True)
         answer_text = voice_brain.ask_and_speak(
             question=question,
             system_prompt=(
@@ -161,9 +215,12 @@ class PermanentSpeechListener:
         )
 
         answer_text = _clean_text(answer_text)
+        print(f"[jarvis] cerveau: réponse='{answer_text}'", flush=True)
         return answer_text
 
     def _handle_idle_block(self, block: np.ndarray) -> bool:
+        import numpy as np
+
         now = time.monotonic()
         if now < self._wakeword_cooldown_until:
             return False
@@ -178,6 +235,10 @@ class PermanentSpeechListener:
 
         if score >= self.config.wakeword_threshold:
             self._wakeword_hits += 1
+            print(
+                f"[jarvis] hotword score={score:.3f} hits={self._wakeword_hits}",
+                flush=True,
+            )
         else:
             self._wakeword_hits = 0
 
@@ -185,6 +246,7 @@ class PermanentSpeechListener:
             self._wakeword_hits = 0
             self._wakeword_model.reset()
             self._wakeword_cooldown_until = now + self.config.wakeword_lockout_seconds
+            print("[jarvis] hotword détecté", flush=True)
             if self._presence_hook is not None:
                 self._presence_hook("listening")
             return True
@@ -203,6 +265,9 @@ class PermanentSpeechListener:
         return drained_blocks
 
     def _collect_until_silence(self, first_block: np.ndarray) -> None:
+        import numpy as np
+
+        print("[jarvis] écoute: collecte audio", flush=True)
         self._wakeword_cooldown_until = time.monotonic() + self.config.wakeword_lockout_seconds
         drained_blocks = self._drain_audio_queue()
 
@@ -243,6 +308,7 @@ class PermanentSpeechListener:
         except Exception:
             if self._presence_hook is not None:
                 self._presence_hook("hide_overlay")
+            print("[jarvis] transcription: erreur", flush=True)
             return
 
         if text:
@@ -251,6 +317,7 @@ class PermanentSpeechListener:
                     self._presence_hook("thinking")
                 self._ask_brain(text)
             except Exception:
+                print("[jarvis] cerveau: erreur", flush=True)
                 pass
         elif self._presence_hook is not None:
             self._presence_hook("hide_overlay")
@@ -260,6 +327,10 @@ class PermanentSpeechListener:
         drained_blocks = self._drain_audio_queue()
 
     def run(self) -> None:
+        print("[jarvis] listener: attente du microphone", flush=True)
+        import sounddevice as sd
+
+        print("[jarvis] listener: ouverture du flux audio", flush=True)
         with sd.InputStream(
             samplerate=self.config.sample_rate,
             blocksize=self.config.block_size,
@@ -267,6 +338,7 @@ class PermanentSpeechListener:
             dtype="float32",
             callback=self._audio_callback,
         ):
+            print("[jarvis] listener: en écoute", flush=True)
             while not self._stop_requested:
                 if time.monotonic() < self._wakeword_cooldown_until:
                     try:
@@ -282,9 +354,12 @@ class PermanentSpeechListener:
 
                 if self._handle_idle_block(block):
                     self._collect_until_silence(block)
+        print("[jarvis] listener: flux fermé", flush=True)
+        print("[jarvis] listener: flux fermé", flush=True)
 
     def stop(self) -> None:
         self._stop_requested = True
+        print("[jarvis] listener: stop demandé", flush=True)
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -12,7 +12,8 @@ from PySide6.QtCore import (
     Qt,
     Signal,
 )
-from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen, QRadialGradient
+from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPainterPath, QPen, QRadialGradient
+from PySide6.QtCore import QRectF
 from PySide6.QtWidgets import QWidget
 
 from .appearance_actions import AppearanceState
@@ -138,6 +139,47 @@ class ScreenHaloOverlay(QWidget):
         accent.setAlpha(255)
         return accent
 
+    def _rounded_ring_path(self, rect: QRectF, inset: float, radius: float) -> QPainterPath:
+        outer_path = QPainterPath()
+        inner_path = QPainterPath()
+        outer_path.addRoundedRect(rect, radius, radius)
+        inner_rect = rect.adjusted(inset, inset, -inset, -inset)
+        inner_radius = max(8.0, radius - inset * 0.75)
+        inner_path.addRoundedRect(inner_rect, inner_radius, inner_radius)
+        return outer_path.subtracted(inner_path)
+
+    def _draw_glow_blob(
+        self,
+        painter: QPainter,
+        center_x: float,
+        center_y: float,
+        radius: float,
+        color: QColor,
+        stretch_x: float = 1.0,
+        stretch_y: float = 1.0,
+    ) -> None:
+        blob = QRadialGradient(center_x, center_y, radius)
+        soft = QColor(color)
+        soft.setAlpha(0)
+        mid = QColor(color)
+        mid.setAlpha(color.alpha())
+        blob.setColorAt(0.0, mid)
+        blob.setColorAt(0.36, QColor(color.red(), color.green(), color.blue(), int(color.alpha() * 0.42)))
+        blob.setColorAt(1.0, soft)
+        painter.save()
+        painter.translate(center_x, center_y)
+        painter.scale(stretch_x, stretch_y)
+        painter.translate(-center_x, -center_y)
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(blob)
+        painter.drawEllipse(
+            center_x - radius,
+            center_y - radius,
+            radius * 2.0,
+            radius * 2.0,
+        )
+        painter.restore()
+
     def resizeEvent(self, event) -> None:  # type: ignore[override]
         super().resizeEvent(event)
         self.update()
@@ -154,9 +196,14 @@ class ScreenHaloOverlay(QWidget):
 
             width = float(self.width())
             height = float(self.height())
-            edge_width = 22.0 + 52.0 * intensity
-            corner_size = 120.0 + 90.0 * intensity
+            min_side = min(width, height)
+            ring_inset = 14.0 + 26.0 * intensity
+            outer_radius = min_side * 0.055 + 34.0 + 16.0 * intensity
+            inner_radius = max(10.0, outer_radius - ring_inset * 0.85)
+            ring_width = 18.0 + 34.0 * intensity
             pulse = 0.84 + 0.16 * math.sin(self._phase)
+            drift_x = math.sin(self._phase * 0.67) * 10.0 * intensity
+            drift_y = math.cos(self._phase * 0.53) * 8.0 * intensity
             base_color = self._base_glow_color()
             accent_color = self._accent_color()
 
@@ -164,6 +211,7 @@ class ScreenHaloOverlay(QWidget):
             mid_alpha = int(78 + 120 * intensity * pulse)
             inner_alpha = int(18 + 36 * intensity)
             highlight_alpha = int(44 + 60 * intensity * pulse)
+            edge_alpha = int(18 + 40 * intensity * pulse)
 
             outer = QColor(base_color)
             outer.setAlpha(outer_alpha)
@@ -173,85 +221,86 @@ class ScreenHaloOverlay(QWidget):
             inner.setAlpha(inner_alpha)
             highlight = QColor(accent_color)
             highlight.setAlpha(highlight_alpha)
+            edge_glow = QColor(base_color)
+            edge_glow.setAlpha(edge_alpha)
 
             transparent = QColor(0, 0, 0, 0)
 
-            # Top and bottom halos.
-            for y, is_top in ((0.0, True), (height - edge_width, False)):
-                gradient = QLinearGradient(0.0, y, 0.0, y + edge_width)
-                if is_top:
-                    gradient.setColorAt(0.0, highlight)
-                    gradient.setColorAt(0.22, outer)
-                    gradient.setColorAt(0.58, mid)
-                    gradient.setColorAt(1.0, transparent)
-                else:
-                    gradient.setColorAt(0.0, transparent)
-                    gradient.setColorAt(0.42, mid)
-                    gradient.setColorAt(0.78, outer)
-                    gradient.setColorAt(1.0, highlight)
-                painter.fillRect(0.0, y, width, edge_width, gradient)
-
-            # Left and right halos.
-            for x, is_left in ((0.0, True), (width - edge_width, False)):
-                gradient = QLinearGradient(x, 0.0, x + edge_width, 0.0)
-                if is_left:
-                    gradient.setColorAt(0.0, highlight)
-                    gradient.setColorAt(0.22, outer)
-                    gradient.setColorAt(0.58, mid)
-                    gradient.setColorAt(1.0, transparent)
-                else:
-                    gradient.setColorAt(0.0, transparent)
-                    gradient.setColorAt(0.42, mid)
-                    gradient.setColorAt(0.78, outer)
-                    gradient.setColorAt(1.0, highlight)
-                painter.fillRect(x, 0.0, edge_width, height, gradient)
-
-            # Corners.
-            corner_alpha = int(88 + 80 * intensity * pulse)
-            corner_glow = QColor(base_color)
-            corner_glow.setAlpha(corner_alpha)
-            for center_x, center_y in (
-                (0.0, 0.0),
-                (width, 0.0),
-                (0.0, height),
-                (width, height),
-            ):
-                radial = QRadialGradient(center_x, center_y, corner_size)
-                radial.setColorAt(0.0, corner_glow)
-                radial.setColorAt(0.32, outer)
-                radial.setColorAt(0.66, inner)
-                radial.setColorAt(1.0, transparent)
-                painter.setPen(Qt.NoPen)
-                painter.setBrush(radial)
-                painter.drawEllipse(
-                    center_x - corner_size,
-                    center_y - corner_size,
-                    corner_size * 2.0,
-                    corner_size * 2.0,
-                )
-
-            # Thin premium edge line.
-            border_alpha = int(22 + 48 * intensity)
-            border_color = QColor(base_color)
-            border_color.setAlpha(border_alpha)
-            painter.setPen(QPen(border_color, 1.2))
-            inset = 1.0
-            painter.setBrush(Qt.NoBrush)
-            painter.drawRect(self.rect().adjusted(int(inset), int(inset), -int(inset), -int(inset)))
-
-            # Softer inner contour to keep the center empty but alive.
-            contour_alpha = int(10 + 24 * intensity * pulse)
-            contour_color = QColor(accent_color)
-            contour_color.setAlpha(contour_alpha)
-            painter.setPen(QPen(contour_color, 1.0))
-            contour_margin = 14.0 + 20.0 * intensity
-            painter.drawRect(
-                self.rect().adjusted(
-                    int(contour_margin),
-                    int(contour_margin),
-                    -int(contour_margin),
-                    -int(contour_margin),
-                )
+            outer_rect = QRectF(2.0, 2.0, width - 4.0, height - 4.0)
+            ring_path = self._rounded_ring_path(outer_rect, ring_inset, outer_radius)
+            inner_path = self._rounded_ring_path(
+                outer_rect.adjusted(8.0, 8.0, -8.0, -8.0),
+                max(12.0, ring_inset * 0.62),
+                inner_radius,
             )
+
+            sweep = QLinearGradient(0.0, 0.0, width, height)
+            sweep.setColorAt(0.0, highlight)
+            sweep.setColorAt(0.26, outer)
+            sweep.setColorAt(0.52, edge_glow)
+            sweep.setColorAt(0.75, mid)
+            sweep.setColorAt(1.0, highlight)
+
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(sweep)
+            painter.drawPath(ring_path)
+
+            shimmer = QLinearGradient(width, 0.0, 0.0, height)
+            shimmer.setColorAt(0.0, QColor(highlight.red(), highlight.green(), highlight.blue(), int(highlight.alpha() * 0.36)))
+            shimmer.setColorAt(0.5, transparent)
+            shimmer.setColorAt(1.0, QColor(base_color.red(), base_color.green(), base_color.blue(), int(base_color.alpha() * 0.18)))
+            painter.setBrush(shimmer)
+            painter.drawPath(ring_path)
+
+            contour_color = QColor(accent_color)
+            contour_color.setAlpha(int(14 + 34 * intensity * pulse))
+            painter.setPen(QPen(contour_color, 1.15))
+            painter.setBrush(Qt.NoBrush)
+            painter.drawPath(inner_path)
+
+            corner_radius = min_side * 0.09 + 54.0 * intensity
+            corner_spread_x = 1.0 + 0.10 * intensity
+            corner_spread_y = 1.0 + 0.08 * intensity
+            corner_color = QColor(base_color)
+            corner_color.setAlpha(int(90 + 80 * intensity * pulse))
+            for center_x, center_y, stretch_x, stretch_y in (
+                (0.0, 0.0, 1.0 + 0.06 * intensity, 1.0 + 0.04 * intensity),
+                (width, 0.0, 1.0 + 0.10 * intensity, 1.0 + 0.04 * intensity),
+                (0.0, height, 1.0 + 0.04 * intensity, 1.0 + 0.10 * intensity),
+                (width, height, 1.0 + 0.08 * intensity, 1.0 + 0.08 * intensity),
+            ):
+                self._draw_glow_blob(
+                    painter,
+                    center_x,
+                    center_y,
+                    corner_radius,
+                    corner_color,
+                    stretch_x=stretch_x,
+                    stretch_y=stretch_y,
+                )
+
+            edge_radius = min_side * 0.12 + 36.0 * intensity
+            edge_color = QColor(accent_color)
+            edge_color.setAlpha(int(68 + 52 * intensity * pulse))
+            for center_x, center_y, stretch_x, stretch_y in (
+                (width * 0.5 + drift_x, 0.0, 2.2, 0.72),
+                (width * 0.5 - drift_x, height, 2.2, 0.72),
+                (0.0, height * 0.5 + drift_y, 0.72, 2.1),
+                (width, height * 0.5 - drift_y, 0.72, 2.1),
+            ):
+                self._draw_glow_blob(
+                    painter,
+                    center_x,
+                    center_y,
+                    edge_radius,
+                    edge_color,
+                    stretch_x=stretch_x,
+                    stretch_y=stretch_y,
+                )
+
+            border_color = QColor(base_color)
+            border_color.setAlpha(int(24 + 44 * intensity))
+            painter.setPen(QPen(border_color, 1.25))
+            painter.drawPath(ring_path)
         finally:
             painter.end()
